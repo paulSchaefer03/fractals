@@ -59,6 +59,13 @@ QColor colorMapColoring(int iter, int maxIter) {
     }
 }
 
+QColor distanceColoring(double distance) {
+    double normalized = std::min(1.0, std::max(0.0, distance * 0.1)); 
+    int shade = static_cast<int>(255 * (1.0 - normalized)); // 0 = hell, 255 = dunkel
+    return QColor(shade, shade, shade);
+}
+
+
 QColor getColor(int iter, int maxIter, double zn, ColoringMode mode) {
     switch (mode) {
         case ColoringMode::Linear:
@@ -69,6 +76,8 @@ QColor getColor(int iter, int maxIter, double zn, ColoringMode mode) {
             return smoothColoring(iter, maxIter, zn);
         case ColoringMode::ColorMap:
             return colorMapColoring(iter, maxIter);
+        case ColoringMode::Distance:
+            return distanceColoring(zn);
         default:
             return QColor(0, 0, 0);
     }

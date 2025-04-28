@@ -6,9 +6,48 @@
 #include <QWheelEvent>
 #include <QMouseEvent>
 #include <cmath>
+#include <QInputDialog>
+
+void MandelbrotWidget::showGotoDialog() {
+    bool ok1, ok2, ok3;
+
+    double centerRe = (minRe + maxRe) / 2.0;
+    double centerIm = (minIm + maxIm) / 2.0;
+    double reRange = maxRe - minRe;
+
+    double newRe = QInputDialog::getDouble(this, "Goto Position", "Center Realteil:", centerRe, -10.0, 10.0, 15, &ok1);
+    if (!ok1) return;
+
+    double newIm = QInputDialog::getDouble(this, "Goto Position", "Center Imaginärteil:", centerIm, -10.0, 10.0, 15, &ok2);
+    if (!ok2) return;
+
+    double newRange = QInputDialog::getDouble(this, "Goto Position", "Realbereichweite:", reRange, 1e-20, 4.0, 10, &ok3);
+    if (!ok3) return;
+
+    double halfRange = newRange / 2.0;
+
+    minRe = newRe - halfRange;
+    maxRe = newRe + halfRange;
+    minIm = newIm - halfRange * height() / width();
+    maxIm = newIm + halfRange * height() / width();
+
+    quickRender = true;
+    needsRedraw = true;
+    update();
+
+    redrawTimer.start(100); // Vollauflösung nachziehen
+}
+
 
 MandelbrotWidget::MandelbrotWidget(QWidget* parent)
-    : QWidget(parent) {}
+    : QWidget(parent) {
+        connect(&redrawTimer, &QTimer::timeout, this, [this]() {
+            quickRender = false;
+            needsRedraw = true;
+            update();
+        });
+        redrawTimer.setSingleShot(true);
+    }
 
 void MandelbrotWidget::paintEvent(QPaintEvent*) {
     if (needsRedraw) {
@@ -17,15 +56,44 @@ void MandelbrotWidget::paintEvent(QPaintEvent*) {
     }
 
     QPainter painter(this);
-    painter.drawImage(0, 0, image);
+    painter.drawImage(rect(), image);
     painter.setPen(Qt::white);
     QFont font = painter.font();
     font.setPointSize(10);
     painter.setFont(font);
 
+    QString statusText;
+    if (quickRender) {
+        statusText = "Rendering: Quick Preview (Low Iterations)";
+    } else {
+        statusText = "Rendering: Full Detail";
+    }
+    
     QString zoomText = QString("Zoomlevel (Realbereich): %1").arg(maxRe - minRe, 0, 'e', 2);
-    painter.drawText(10, 20, zoomText);
+    double centerRe = (minRe + maxRe) / 2.0;
+    double centerIm = (minIm + maxIm) / 2.0;
+    QString centerText = QString("Center: (%1, %2)")
+        .arg(centerRe, 0, 'f', 15)
+        .arg(centerIm, 0, 'f', 15);
+    
+    // Hintergrund für bessere Lesbarkeit
+    QRect rect(10, 10, 450, 60);
+    painter.fillRect(rect, QColor(0, 0, 0, 150));
+    
 
+    painter.drawText(20, 25, statusText);
+    painter.drawText(20, 45, zoomText);
+    painter.drawText(20, 65, centerText);
+    
+
+}
+
+QSize MandelbrotWidget::getRenderSize() const {
+    if (quickRender) {
+        return QSize(width() / 2, height() / 2);
+    } else {
+        return QSize(width(), height());
+    }
 }
 
 bool MandelbrotWidget::isInsideCardioidOrBulb(double cr, double ci) const {
@@ -39,42 +107,57 @@ bool MandelbrotWidget::isInsideCardioidOrBulb(double cr, double ci) const {
 
 QColor MandelbrotWidget::computePixelColor(double cr, double ci) const {
     double zr = 0.0, zi = 0.0;
+    double dr = 1.0, di = 0.0; // Ableitung
+
     int iter = 0;
-    int maxIter = computeMaxIterations();
+    int maxIter = computeMaxIterations(quickRender);
 
     while (zr * zr + zi * zi <= 4.0 && iter < maxIter) {
-        double temp = zr * zr - zi * zi + cr;
+        double tempZr = zr * zr - zi * zi + cr;
+        double tempDr = 2.0 * (zr * dr - zi * di) + 1.0;
+        double tempDi = 2.0 * (zr * di + zi * dr);
+
         zi = 2.0 * zr * zi + ci;
-        zr = temp;
+        zr = tempZr;
+        dr = tempDr;
+        di = tempDi;
         iter++;
     }
 
-    double zn = sqrt(zr * zr + zi * zi);
-    return getColor(iter, maxIter, zn, currentMode);
+    double modulus = sqrt(zr * zr + zi * zi);
+    double derivative = sqrt(dr * dr + di * di);
+    double distance = modulus * log(modulus) / derivative;
+
+    return getColor(iter, maxIter, distance, currentMode); 
 }
 
 
+
 void MandelbrotWidget::generateImage() {
-    image = QImage(width(), height(), QImage::Format_RGB32);
+    QSize renderSize = getRenderSize();
+    int renderWidth = renderSize.width();
+    int renderHeight = renderSize.height();
+
+    image = QImage(renderSize, QImage::Format_RGB32);
 
     int numThreads = std::thread::hardware_concurrency();
     if (numThreads == 0) numThreads = 4;
 
     std::vector<std::thread> threads;
-    int blockSize = height() / numThreads;
+    int blockSize = renderHeight / numThreads;
 
     for (int i = 0; i < numThreads; ++i) {
         int startY = i * blockSize;
-        int endY = (i == numThreads - 1) ? height() : (i + 1) * blockSize;
+        int endY = (i == numThreads - 1) ? renderHeight : (i + 1) * blockSize;
 
         threads.emplace_back([=]() {
-            double reFactor = (maxRe - minRe) / (width() - 1);
-            double imFactor = (maxIm - minIm) / (height() - 1);
+            double reFactor = (maxRe - minRe) / (renderWidth - 1);
+            double imFactor = (maxIm - minIm) / (renderHeight - 1);
 
             for (int y = startY; y < endY; ++y) {
-                for (int x = 0; x < width(); ++x) {
-                    if (enableSupersampling) {
-                        // Supersampling (2x2 Subpixel)
+                for (int x = 0; x < renderWidth; ++x) {
+                    if (enableSupersampling && !quickRender) {
+                        // Supersampling (nur bei FullRender)
                         int red = 0, green = 0, blue = 0;
                         for (int subY = 0; subY < 2; ++subY) {
                             for (int subX = 0; subX < 2; ++subX) {
@@ -118,6 +201,7 @@ void MandelbrotWidget::generateImage() {
 }
 
 
+
 void MandelbrotWidget::wheelEvent(QWheelEvent* event) {
     double zoomFactor = 0.9;
 
@@ -139,8 +223,11 @@ void MandelbrotWidget::wheelEvent(QWheelEvent* event) {
     minIm = imCenter - imRange / 2.0;
     maxIm = imCenter + imRange / 2.0;
 
+    quickRender = true;
     needsRedraw = true;
     update();
+
+    redrawTimer.start(1000);
 }
 
 void MandelbrotWidget::mousePressEvent(QMouseEvent* event) {
@@ -183,13 +270,28 @@ void MandelbrotWidget::keyPressEvent(QKeyEvent* event) {
         currentMode = ColoringMode::ColorMap;
         needsRedraw = true;
         update();
-    } else {
+    }else if (event->key() == Qt::Key_5) {
+        currentMode = ColoringMode::Distance;
+        needsRedraw = true;
+        update();
+    }else if (event->key() == Qt::Key_G) {
+        showGotoDialog();
+    }else {
         QWidget::keyPressEvent(event);
     }
 }
 
-int MandelbrotWidget::computeMaxIterations() const {
-    double scale = maxRe - minRe; // Bereich auf der Realachse
-    int iter = static_cast<int>(500 + 1000 * std::log10(3.0 / scale));
-    return std::clamp(iter, 500, 5000); // Mindestens 500, maximal 5000
+int MandelbrotWidget::computeMaxIterations(bool quick) const {
+    double scale = maxRe - minRe;
+    int baseIter = static_cast<int>(500 + 10000 * std::log10(3.0 / scale));
+    baseIter = std::clamp(baseIter, 500, 10000);
+
+    if (quick) {
+        int quickIter = static_cast<int>(baseIter * 0.25); // 25% der Basis-Iterationen
+        return std::clamp(quickIter, 100, baseIter);
+    } else {
+        return baseIter;
+    }
 }
+
+

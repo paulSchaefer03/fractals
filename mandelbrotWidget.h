@@ -4,6 +4,7 @@
 #include <QImage>
 #include <QPoint>
 #include <vector>
+#include <QTimer>
 #include <thread>
 #include "coloring.h"
 
@@ -20,13 +21,17 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     bool isInsideCardioidOrBulb(double cr, double ci) const;
     QColor computePixelColor(double cr, double ci) const;
+    QSize getRenderSize() const;
+    void showGotoDialog();
 
 private:
 /*     static constexpr int WIDTH = 3840;
     static constexpr int HEIGHT = 2160; */
     static constexpr int WIDTH = 1600;
     static constexpr int HEIGHT = 1200;
-    int computeMaxIterations() const;
+/*     static constexpr int WIDTH = 400;
+    static constexpr int HEIGHT = 300; */
+    int computeMaxIterations(bool) const;
     
 
     ColoringMode currentMode = ColoringMode::Linear;
@@ -40,6 +45,9 @@ private:
     QPoint lastMousePos;
     QImage image;
     bool needsRedraw = true;
+    bool quickRender = false;
+
+    QTimer redrawTimer; 
 
     void generateImage();
 };
