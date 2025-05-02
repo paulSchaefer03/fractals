@@ -1,0 +1,14 @@
+#Konfig
+cmake -S . -B build -G "MinGW Makefiles" ^ -DCMAKE_INSTALL_PREFIX="C:/Users/schaeferp/Documents/fractals-main/fractals-main/install"
+
+# Bauen
+cmake --build build --config Release
+
+# Installieren (kopiert EXE + DLLs in build/install)
+cmake --install build --config Release
+
+#Kopieren von
+mv -force .\install\MandelbrotExplorerQt.exe .\install\bin\
+
+#Starten
+.\install\bin\MandelbrotExplorerQt.exe
