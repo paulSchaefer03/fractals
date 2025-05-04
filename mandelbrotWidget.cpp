@@ -7,6 +7,9 @@
 #include <QMouseEvent>
 #include <cmath>
 #include <QInputDialog>
+#include <QFileDialog>
+#include <QDateTime>
+#include <QInputDialog>
 
 void MandelbrotWidget::showGotoDialog() {
     bool ok1, ok2, ok3;
@@ -128,57 +131,62 @@ QColor MandelbrotWidget::computePixelColor(double cr, double ci) const {
     double derivative = sqrt(dr * dr + di * di);
     double distance = modulus * log(modulus) / derivative;
 
-    return getColor(iter, maxIter, distance, currentMode); 
+    return getColor(iter, maxIter, distance, currentMode, modulus); 
 }
 
+void MandelbrotWidget::createScreenshot() {
+    bool okW, okH;
 
+    int width = QInputDialog::getInt(this, "Screenshot", "Breite (z.B. 1920):", 1920, 100, 10000, 1, &okW);
+    if (!okW) return;
 
-void MandelbrotWidget::generateImage() {
-    QSize renderSize = getRenderSize();
-    int renderWidth = renderSize.width();
-    int renderHeight = renderSize.height();
+    int height = QInputDialog::getInt(this, "Screenshot", "Höhe (z.B. 1080):", 1080, 100, 10000, 1, &okH);
+    if (!okH) return;
 
-    image = QImage(renderSize, QImage::Format_RGB32);
+    QSize targetSize(width, height);
+    int iter = computeMaxIterations(false); // volle Qualität
+
+    QImage highres = renderFractalAtSize(targetSize, iter);
+
+    QString filename = QString("mandelbrot_%1x%2_%3.png")
+        .arg(width)
+        .arg(height)
+        .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss"));
+
+    QString savePath = QFileDialog::getSaveFileName(this, "Screenshot speichern", filename, "PNG Dateien (*.png)");
+    if (!savePath.isEmpty()) {
+        highres.save(savePath);
+    }
+}
+
+QImage MandelbrotWidget::renderFractalAtSize(QSize size, int maxIter) const {
+    int w = size.width();
+    int h = size.height();
+    QImage result(size, QImage::Format_RGB32);
+
+    const int blockHeight = 8;
+    int numBlocks = (h + blockHeight - 1) / blockHeight;
+    std::atomic<int> nextBlock(0);
 
     int numThreads = std::thread::hardware_concurrency();
     if (numThreads == 0) numThreads = 4;
 
     std::vector<std::thread> threads;
-    int blockSize = renderHeight / numThreads;
 
-    for (int i = 0; i < numThreads; ++i) {
-        int startY = i * blockSize;
-        int endY = (i == numThreads - 1) ? renderHeight : (i + 1) * blockSize;
+    for (int t = 0; t < numThreads; ++t) {
+        threads.emplace_back([=, &result, &nextBlock]() {
+            double reFactor = (maxRe - minRe) / (w - 1);
+            double imFactor = (maxIm - minIm) / (h - 1);
 
-        threads.emplace_back([=]() {
-            double reFactor = (maxRe - minRe) / (renderWidth - 1);
-            double imFactor = (maxIm - minIm) / (renderHeight - 1);
+            while (true) {
+                int blockIndex = nextBlock.fetch_add(1);
+                if (blockIndex >= numBlocks) break;
 
-            for (int y = startY; y < endY; ++y) {
-                for (int x = 0; x < renderWidth; ++x) {
-                    if (enableSupersampling && !quickRender) {
-                        // Supersampling (nur bei FullRender)
-                        int red = 0, green = 0, blue = 0;
-                        for (int subY = 0; subY < 2; ++subY) {
-                            for (int subX = 0; subX < 2; ++subX) {
-                                double cr = minRe + (x + (subX + 0.5) / 2.0) * reFactor;
-                                double ci = maxIm - (y + (subY + 0.5) / 2.0) * imFactor;
+                int startY = blockIndex * blockHeight;
+                int endY = std::min(startY + blockHeight, h);
 
-                                QColor color;
-                                if (isInsideCardioidOrBulb(cr, ci)) {
-                                    color = Qt::black;
-                                } else {
-                                    color = computePixelColor(cr, ci);
-                                }
-
-                                red += color.red();
-                                green += color.green();
-                                blue += color.blue();
-                            }
-                        }
-                        image.setPixelColor(x, y, QColor(red / 4, green / 4, blue / 4));
-                    } else {
-                        // Ohne Supersampling
+                for (int y = startY; y < endY; ++y) {
+                    for (int x = 0; x < w; ++x) {
                         double cr = minRe + x * reFactor;
                         double ci = maxIm - y * imFactor;
 
@@ -188,7 +196,86 @@ void MandelbrotWidget::generateImage() {
                         } else {
                             color = computePixelColor(cr, ci);
                         }
-                        image.setPixelColor(x, y, color);
+
+                        result.setPixelColor(x, y, color);
+                    }
+                }
+            }
+        });
+    }
+
+    for (auto& t : threads) {
+        t.join();
+    }
+
+    return result;
+}
+
+
+void MandelbrotWidget::generateImage() {
+    QSize renderSize = getRenderSize();
+    int renderWidth = renderSize.width();
+    int renderHeight = renderSize.height();
+    image = QImage(renderSize, QImage::Format_RGB32);
+
+    int numThreads = std::thread::hardware_concurrency();
+    //printf("Number Threads: %d\n", numThreads);
+    if (numThreads == 0) numThreads = 4;
+
+    int numBlocks = (renderHeight + BLOCKHEIGHT - 1) / BLOCKHEIGHT;
+
+    std::atomic<int> nextBlock(0);
+
+    std::vector<std::thread> threads;
+    for (int t = 0; t < numThreads; ++t) {
+        threads.emplace_back([=, &nextBlock]() {
+            double reFactor = (maxRe - minRe) / (renderWidth - 1);
+            double imFactor = (maxIm - minIm) / (renderHeight - 1);
+            int maxIter = computeMaxIterations(quickRender);
+
+            while (true) {
+                int blockIndex = nextBlock.fetch_add(1);
+                if (blockIndex >= numBlocks) break;
+
+                int startY = blockIndex * BLOCKHEIGHT;
+                int endY = std::min(startY + BLOCKHEIGHT, renderHeight);
+
+                for (int y = startY; y < endY; ++y) {
+                    for (int x = 0; x < renderWidth; ++x) {
+                        if (enableSupersampling && !quickRender) {
+                            // Supersampling (nur bei FullRender)
+                            int red = 0, green = 0, blue = 0;
+                            for (int subY = 0; subY < 2; ++subY) {
+                                for (int subX = 0; subX < 2; ++subX) {
+                                    double cr = minRe + (x + (subX + 0.5) / 2.0) * reFactor;
+                                    double ci = maxIm - (y + (subY + 0.5) / 2.0) * imFactor;
+
+                                    QColor color;
+                                    if (isInsideCardioidOrBulb(cr, ci)) {
+                                        color = Qt::black;
+                                    } else {
+                                        color = computePixelColor(cr, ci);
+                                    }
+
+                                    red += color.red();
+                                    green += color.green();
+                                    blue += color.blue();
+                                }
+                            }
+                            image.setPixelColor(x, y, QColor(red / 4, green / 4, blue / 4));
+                        } else {
+                            // Ohne Supersampling
+                            double cr = minRe + x * reFactor;
+                            double ci = maxIm - y * imFactor;
+
+                            QColor color;
+                            if (isInsideCardioidOrBulb(cr, ci)) {
+                                color = Qt::black;
+                            } else {
+                                color = computePixelColor(cr, ci);
+                            }
+                            image.setPixelColor(x, y, color);
+                        }
                     }
                 }
             }
@@ -274,8 +361,14 @@ void MandelbrotWidget::keyPressEvent(QKeyEvent* event) {
         currentMode = ColoringMode::Distance;
         needsRedraw = true;
         update();
+    }else if (event->key() == Qt::Key_6) {
+            currentMode = ColoringMode::Rainbow;
+            needsRedraw = true;
+            update();
     }else if (event->key() == Qt::Key_G) {
         showGotoDialog();
+    }else if (event->key() == Qt::Key_S) {
+        createScreenshot();
     }else {
         QWidget::keyPressEvent(event);
     }

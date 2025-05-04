@@ -23,12 +23,16 @@ protected:
     QColor computePixelColor(double cr, double ci) const;
     QSize getRenderSize() const;
     void showGotoDialog();
+    void createScreenshot();
+    QImage renderFractalAtSize(QSize size, int maxIter) const;
+
 
 private:
 /*     static constexpr int WIDTH = 3840;
     static constexpr int HEIGHT = 2160; */
     static constexpr int WIDTH = 1600;
     static constexpr int HEIGHT = 1200;
+    static constexpr int BLOCKHEIGHT = 16; //Da muss man mal aufprobieren zwischen 8-16
 /*     static constexpr int WIDTH = 400;
     static constexpr int HEIGHT = 300; */
     int computeMaxIterations(bool) const;

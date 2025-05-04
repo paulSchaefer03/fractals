@@ -7,7 +7,8 @@ enum class ColoringMode {
     Sinusoidal,
     Smooth,
     ColorMap,
-    Distance  
+    Distance,
+    Rainbow  
 };
 
-QColor getColor(int iter, int maxIter, double zn, ColoringMode mode);
+QColor getColor(int iter, int maxIter, double zn, ColoringMode mode, double modulus);

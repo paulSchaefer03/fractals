@@ -65,8 +65,20 @@ QColor distanceColoring(double distance) {
     return QColor(shade, shade, shade);
 }
 
+QColor rainbowColoring(int iter, int maxIter, double zn) {
+    if (iter >= maxIter) return Qt::black;
+/*     double smoothIter = iter + 1.0 - log(log(std::sqrt(zr * zr + zi * zi))) / log(2.0);
+    double t = smoothIter / maxIter; */
+    
+    double smooth = iter + 1.0 - log(log(zn)) / log(2.0);
+    double t = smooth / maxIter;
+    int hue = static_cast<int>(360.0 * t);  // 0–360°
 
-QColor getColor(int iter, int maxIter, double zn, ColoringMode mode) {
+    return QColor::fromHsl(hue % 360, 255, 200);
+}
+
+
+QColor getColor(int iter, int maxIter, double zn, ColoringMode mode, double modulus) {
     switch (mode) {
         case ColoringMode::Linear:
             return linearColoring(iter, maxIter);
@@ -78,6 +90,8 @@ QColor getColor(int iter, int maxIter, double zn, ColoringMode mode) {
             return colorMapColoring(iter, maxIter);
         case ColoringMode::Distance:
             return distanceColoring(zn);
+        case ColoringMode::Rainbow:
+            return rainbowColoring(iter, maxIter, modulus);
         default:
             return QColor(0, 0, 0);
     }
